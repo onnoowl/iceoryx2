@@ -501,9 +501,19 @@ impl<
         }
         .required_amount_of_samples_per_data_segment(config.max_loaned_samples);
 
-        let number_of_samples = publisher_factory
+        let initial_number_of_samples = publisher_factory
             .preallocate_number_of_samples_override
             .call(number_of_samples);
+
+        // Dynamic pools can grow beyond the initial reservation. Both local reference
+        // counters and the shared connection's used-chunk lists must cover every
+        // bucket index that a grown segment can produce. The worst-case live sample
+        // count bounds growth; PowerOfTwo can round the final segment above it.
+        let number_of_samples = match config.allocation_strategy {
+            AllocationStrategy::Static => initial_number_of_samples,
+            AllocationStrategy::BestFit => number_of_samples,
+            AllocationStrategy::PowerOfTwo => number_of_samples.next_power_of_two(),
+        };
 
         let data_segment_type =
             DataSegmentType::new_from_allocation_strategy(config.allocation_strategy);
@@ -532,13 +542,13 @@ impl<
                 &segment_name,
                 sample_layout,
                 global_config,
-                number_of_samples,
+                initial_number_of_samples,
             ),
             DataSegmentType::Dynamic => DataSegment::create_dynamic_segment(
                 &segment_name,
                 sample_layout,
                 global_config,
-                number_of_samples,
+                initial_number_of_samples,
                 config.allocation_strategy,
             ),
         };

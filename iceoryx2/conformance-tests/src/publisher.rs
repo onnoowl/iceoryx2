@@ -191,6 +191,65 @@ pub mod publisher {
     }
 
     #[conformance_test]
+    pub fn reduced_preallocation_supports_dynamic_pool_growth<Sut: Service>()
+    -> core::result::Result<(), alloc::boxed::Box<dyn core::error::Error>> {
+        let test = Test::<Sut>::new();
+        let node = test.create_node();
+        for strategy in [AllocationStrategy::BestFit, AllocationStrategy::PowerOfTwo] {
+            let service_name = generate_service_name();
+            let service = node
+                .service_builder(&service_name)
+                .publish_subscribe::<[u64]>()
+                .max_publishers(1)
+                .max_subscribers(2)
+                .subscriber_max_buffer_size(64)
+                .enable_safe_overflow(true)
+                .create()?;
+            let subscriber = service.subscriber_builder().create()?;
+            let publisher = service
+                .publisher_builder()
+                .initial_max_slice_len(1)
+                .max_loaned_samples(1)
+                .allocation_strategy(strategy)
+                .override_sample_preallocation(|_| 8)
+                .create()?;
+
+            // Keep old segments alive while growing the number of buckets.
+            for value in 0..64u64 {
+                publisher
+                    .loan_slice_uninit(1)?
+                    .write_from_fn(|_| value)
+                    .send()?;
+            }
+            for value in 0..64u64 {
+                let sample = subscriber.receive()?.unwrap();
+                assert_that!(sample.payload(), eq & [value][..]);
+            }
+            assert_that!(subscriber.receive()?, is_none);
+
+            // A later connection must use the same grown capacity. Repeated
+            // fill/drain cycles also exercise reclamation and reused bucket IDs.
+            let late_subscriber = service.subscriber_builder().create()?;
+            for cycle in 0..4u64 {
+                for value in 0..64u64 {
+                    publisher
+                        .loan_slice_uninit(4)?
+                        .write_from_fn(|_| cycle * 64 + value)
+                        .send()?;
+                }
+                for value in 0..64u64 {
+                    let expected = [cycle * 64 + value; 4];
+                    let sample = subscriber.receive()?.unwrap();
+                    let late_sample = late_subscriber.receive()?.unwrap();
+                    assert_that!(sample.payload(), eq & expected[..]);
+                    assert_that!(late_sample.payload(), eq & expected[..]);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[conformance_test]
     pub fn drop_is_not_called_for_underlying_type_of_sample<Sut: Service>()
     -> core::result::Result<(), alloc::boxed::Box<dyn core::error::Error>> {
         let test = Test::<Sut>::new();

@@ -21,6 +21,8 @@
 
 ### Bugfixes
 
+* Fix publisher reference tracking and connection capacity after dynamic pool growth with reduced sample preallocation.
+
 <!--
     NOTE: Add new entries sorted by issue number to minimize the possibility of
     conflicts when merging.
